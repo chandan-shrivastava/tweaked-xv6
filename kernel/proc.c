@@ -12,6 +12,10 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+struct proc *queue[5];
+int age_thresh = 30;
+int qcnt[] = {0, 0, 0, 0, 0};
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -119,6 +123,26 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->ctime = ticks;
+  p->etime = 0;
+  p->rtime = 0;
+  p->tot_wtime = 0;
+  p->rchktime = 0;
+  p->priority = 60;
+  p->niceness = 5;
+  p->n_run = 0;
+  p->stime=0;
+  p->qrtime = 0;
+#ifdef MLFQ
+  p->qid = 0;
+  for (int i = 0; i < 5; i++)
+    p->qtime[i] = 0;
+#endif
+#ifndef MLFQ
+  p->qid = -1;
+  for (int i = 0; i < 5; i++)
+    p->qtime[i] = -1;
+#endif
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -246,7 +270,10 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
-
+  p->rchktime = ticks;
+#ifdef MLFQ
+  push(p, 0);
+#endif
   release(&p->lock);
 }
 
@@ -318,6 +345,10 @@ fork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
+  np->rchktime = ticks;
+#ifdef MLFQ
+  push(np, 0);
+#endif
   release(&np->lock);
 
   return pid;
@@ -357,7 +388,7 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
-
+  p->etime = ticks;
   begin_op();
   iput(p->cwd);
   end_op();
@@ -372,7 +403,8 @@ exit(int status)
   wakeup(p->parent);
   
   acquire(&p->lock);
-
+  if (p->state == RUNNABLE)
+    p->tot_wtime += (ticks - p->rchktime);
   p->xstate = status;
   p->state = ZOMBIE;
   p->etime = ticks;
@@ -407,6 +439,14 @@ wait(uint64 addr)
         if(np->state == ZOMBIE){
           // Found one.
           pid = np->pid;
+          p->ctime = 0;
+          p->etime = 0;
+          p->rtime = 0;
+          p->tot_wtime = 0;
+          p->rchktime = 0;
+          p->n_run = 0;
+          p->next = 0;
+          p->qid = 0;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                   sizeof(np->xstate)) < 0) {
             release(&np->lock);
@@ -493,9 +533,68 @@ update_time()
     acquire(&p->lock);
     if (p->state == RUNNING) {
       p->rtime++;
+#ifdef MLFQ
+      p->qrtime++;
+      p->qtime[p->qid]++;
+#endif
     }
     release(&p->lock); 
   }
+}
+
+int setpriority(int newp, int pid)
+{
+  struct proc *p;
+  int oldp;
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+  acquire(&p->lock);
+
+    if (p->pid == pid)
+    {
+      oldp = p->priority;
+      p->priority = newp;
+      p->niceness=5;
+      release(&p->lock);
+      return oldp;
+    }
+  release(&p->lock);
+  }
+  return -1;
+}
+
+void push(struct proc *p, int qid)
+{
+  p->qrtime = 0;
+  if (qcnt[qid] == 0)
+  {
+    queue[qid] = p;
+    queue[qid]->next = 0;
+  }
+  else
+  {
+    struct proc *q;
+    q = queue[qid];
+    while (q->next != 0)
+      q = q->next;
+    q->next = p;
+    p->next = 0;
+  }
+  qcnt[qid]++;
+}
+
+void pop(int qid)
+{
+  if (qcnt[qid] == 0)
+  {
+    printf("Error: Queue Empty.\n");
+    return;
+  }
+  struct proc *q;
+  q = queue[qid];
+  queue[qid] = queue[qid]->next;
+  q->next = 0;
+  qcnt[qid]--;
 }
 
 // Per-CPU process scheduler.
@@ -512,28 +611,191 @@ scheduler(void)
   struct cpu *c = mycpu();
   
   c->proc = 0;
-  for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
-    intr_on();
 
+#ifdef RR
+  for(;;){
+    intr_on();
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
+
+        p->n_run++;
         p->state = RUNNING;
         c->proc = p;
+        p->tot_wtime += (ticks - p->rchktime);
         swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
         c->proc = 0;
       }
       release(&p->lock);
     }
   }
+#endif
+#ifdef FCFS
+  for (;;)
+  {
+    intr_on();
+    int tchk = ticks;
+    struct proc *minp = 0;
+    for (p = proc; p < &proc[NPROC]; p++)
+    {
+      acquire(&p->lock);
+      if (p->state != RUNNABLE)
+      {
+        release(&p->lock);
+        continue;
+      }
+      if (p->ctime < tchk)
+      {
+        tchk = p->ctime;
+        minp = p;
+      }
+      release(&p->lock);
+    }
+    if (minp == 0)
+    {
+      continue;
+    }
+    acquire(&minp->lock);
+    if (minp->state != RUNNABLE)
+    {
+        release(&minp->lock);
+        continue;
+    }
+    minp->n_run++;
+    c->proc = minp;
+    minp->state = RUNNING;
+    minp->tot_wtime += (ticks - minp->rchktime);
+    swtch(&c->context, &minp->context);
+    c->proc = 0;
+    release(&minp->lock);
+  }
+#endif
+#ifdef PBS
+  for (;;)
+  {
+    intr_on();
+    struct proc * minproc = 0;
+    for (p = proc; p < &proc[NPROC]; p++)
+    {
+      acquire(&p->lock);
+      p->niceness = ((p->sdur)/(p->sdur+p->rtime))*10;
+      if(p->rtime == 0 && p->sdur == 0) p->niceness = 5;
+      p->priority1 = p->priority - p->niceness + 5;
+      p->priority1 = p->priority1 > 100 ? 100 : p->priority1;
+      p->priority1 = p->priority1 < 0 ? 0 : p->priority1;
+      if (p->state == RUNNABLE)
+      {
+          if (minproc == 0)
+          {
+              minproc = p;
+          }
+          else
+          {
+              if (p->priority1 < minproc->priority1 || (p->priority1 <= minproc->priority1 && p->n_run < minproc->n_run) || (p->priority1 <= minproc->priority1 && p->n_run <= minproc->n_run && p->ctime <= minproc->ctime))
+              {
+                  minproc = p;
+              }
+          }
+      }
+      release(&p->lock);
+    }
+    if (minproc != 0)
+    {
+      acquire(&minproc->lock);
+      if(minproc->state!=RUNNABLE)
+      {
+        release(&minproc->lock);
+        continue;
+      }
+      minproc->n_run += 1;
+      c->proc = minproc;
+      minproc->tot_wtime += (ticks - minproc->rchktime);
+      minproc->state = RUNNING;
+      int tempvarr=ticks;
+      swtch(&c->context, &minproc->context);
+      p->rtime=ticks-tempvarr;
+      c->proc = 0;
+      release(&minproc->lock);
+    }
+  }
+#endif
+#ifdef MLFQ
+  for (;;)
+  {
+    intr_on();
+    for (int i = 1; i < 5; i++)
+    {
+      if (qcnt[i] == 0)
+        {
+          continue;
+        }
+      struct proc *trav, *temp;
+      trav = queue[i];
+      while (trav != 0)
+      {
+        if ((ticks - trav->rchktime) >= age_thresh)
+        {
+          if (trav == queue[i])
+          {
+            pop(i);
+            trav->rchktime = ticks;
+            trav->qid--;
+            push(trav, i - 1);
+          }
+          else
+          {
+            temp = queue[i];
+            while (temp->next != trav)
+              temp = temp->next;
+            temp->next = trav->next;
+            trav->next = 0;
+            trav->rchktime = ticks;
+            trav->qid--;
+            push(trav, i - 1);
+          }
+          trav = trav->next;
+        }
+        else
+          trav = trav->next;
+      }
+    }
+    p = 0;
+    for (int i = 0; i < 5; i++)
+    {
+      if (qcnt[i] == 0)
+        continue;
+      else
+      {
+        if (queue[i]->state != RUNNABLE)
+          continue;
+        p = queue[i];
+        pop(i);
+        break;
+      }
+    }
+    if (p == 0)
+    {
+      continue;
+    }
+    acquire(&p->lock);
+    if(p->state!=RUNNABLE)
+    {
+      release(&p->lock);
+      continue;
+    }
+    p->n_run++;
+    c->proc = p;
+    p->state = RUNNING;
+    p->tot_wtime += (ticks - p->rchktime);
+    swtch(&c->context, &p->context);
+
+    c->proc = 0;
+    release(&p->lock);
+  }
+#endif
 }
+
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
@@ -568,7 +830,11 @@ yield(void)
 {
   struct proc *p = myproc();
   acquire(&p->lock);
+#ifdef MLFQ
+  push(p, p->qid);
+#endif
   p->state = RUNNABLE;
+  p->rchktime = ticks;
   sched();
   release(&p->lock);
 }
@@ -612,7 +878,10 @@ sleep(void *chan, struct spinlock *lk)
   release(lk);
 
   // Go to sleep.
+  if (p->state == RUNNABLE)
+    p->tot_wtime += (ticks - p->rchktime);
   p->chan = chan;
+  p->stime=ticks;
   p->state = SLEEPING;
 
   sched();
@@ -637,6 +906,11 @@ wakeup(void *chan)
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
+        p->sdur+=ticks-p->stime;
+        p->rchktime = ticks;
+#ifdef MLFQ
+        push(p, p->qid);
+#endif
       }
       release(&p->lock);
     }
@@ -658,6 +932,9 @@ kill(int pid)
       if(p->state == SLEEPING){
         // Wake process from sleep().
         p->state = RUNNABLE;
+#ifdef MLFQ
+        push(p, p->qid);
+#endif
       }
       release(&p->lock);
       return 0;
@@ -721,7 +998,20 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
+
+#ifdef PBS
+    printf("%d %d %s %s %d %d %d", p->pid, p->priority1, state,p->name, p->rtime, p->tot_wtime,p->n_run);
+    printf("\n");
+#endif
+#ifdef MLFQ
+    printf("%d %d %s %d %d %d %d %d %d %d %d", p->pid, p->priority1, state, p->rtime, p->tot_wtime,p->n_run, p->qtime[0],p->qtime[1],p->qtime[2],p->qtime[3],p->qtime[4]);
+    printf("\n");
+#endif
+#ifndef PBS
+#ifndef MLFQ
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+#endif
+#endif
   }
 }

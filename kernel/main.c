@@ -15,6 +15,18 @@ main()
     printfinit();
     printf("\n");
     printf("xv6 kernel is booting\n");
+#ifdef PBS
+        printf("PBS Active\n");
+#endif
+#ifdef FCFS
+        printf("FCFS Active\n");
+#endif
+#ifdef MLFQ
+        printf("MLFQ Active\n");
+#endif
+#ifdef RR
+        printf("RR Active\n");
+#endif
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table

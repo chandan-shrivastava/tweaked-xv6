@@ -55,8 +55,19 @@ AS = $(TOOLPREFIX)gas
 LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
-
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
+
+SCHED_MACRO = RR
+ifeq ($(SCHEDULER), FCFS)
+SCHED_MACRO = FCFS
+endif
+ifeq ($(SCHEDULER), PBS)
+SCHED_MACRO = PBS
+endif
+ifeq ($(SCHEDULER), MLFQ)
+SCHED_MACRO = MLFQ
+endif
+
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
@@ -70,6 +81,8 @@ endif
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
+CFLAGS += -D $(SCHED_MACRO)
+$(info $$CFLAGS is [${CFLAGS}])
 
 LDFLAGS = -z max-page-size=4096
 
@@ -134,6 +147,8 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 	$U/_strace\
+	$U/_setpriority\
+	$U/_schedulertest\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

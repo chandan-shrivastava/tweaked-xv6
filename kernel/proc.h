@@ -106,8 +106,19 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-
-  uint rtime;                   // How long the process ran for
-  uint ctime;                   // When was the process created 
-  uint etime;                   // When did the process exited
+  uint priority;                // Priority of a process (for PBS)
+  uint priority1;                // Priority of a process (for PBS)
+  uint ctime;                   // Process creation time
+  uint etime;                   // Process end time
+  uint rtime;                   // Process total time
+  uint tot_wtime;               // Process total wait time
+  uint rchktime;                // Time when process was made runnable
+  uint n_run;                   // Number of times process is picked by scheduler
+  struct proc *next;           // pointer to next element (for MLFQ)
+  uint qid;                     // denotes which queue it is in (for MLFQ)
+  uint qtime[5];                // total wait time in each queue
+  uint qrtime;                  // run time in queue
+  uint stime;                   // time when process slept
+  uint sdur;                    // duration of sleep of process
+  uint niceness;
 };

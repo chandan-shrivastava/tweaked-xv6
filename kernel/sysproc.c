@@ -128,3 +128,13 @@ sys_strace(void)
 
   return 0;
 }
+
+uint64 sys_setpriority(void)
+{
+  int newp, pid;
+  if (argint(0, &newp) < 0)
+    return -1;
+  if (argint(1, &pid) < 0)
+    return -1;
+  return setpriority(newp, pid);
+}

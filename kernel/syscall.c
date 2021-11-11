@@ -106,6 +106,7 @@ extern uint64 sys_waitx(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
 extern uint64 sys_strace(void);
+extern uint64 sys_setpriority(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -130,7 +131,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_waitx]   sys_waitx,
-[SYS_strace]  sys_strace
+[SYS_strace]  sys_strace,
+[SYS_setpriority] sys_setpriority
 };
 
 static char *syscall_list[24] = {
@@ -150,23 +152,23 @@ syscall(void)
 {
   int num;
   struct proc *p = myproc();
-
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    int arg1=p->trapframe->a0;
     p->trapframe->a0 = syscalls[num]();
     if (p->mask & (1 << num))
     {
       if(syscall_args[num]==1)
       {
-        printf("%d: syscall %s (%d) -> %d\n", p->pid, syscall_list[num], p->trapframe->a0, p->trapframe->a0);
+        printf("%d: syscall %s (%d) -> %d\n", p->pid, syscall_list[num], arg1, p->trapframe->a0);
       }
       if(syscall_args[num]==2)
       {
-        printf("%d: syscall %s (%d %d) -> %d\n", p->pid, syscall_list[num], p->trapframe->a0,p->trapframe->a1, p->trapframe->a0);
+        printf("%d: syscall %s (%d %d) -> %d\n", p->pid, syscall_list[num], arg1,p->trapframe->a1, p->trapframe->a0);
       }
       if(syscall_args[num]==3)
       {
-        printf("%d: syscall %s (%d %d %d) -> %d\n", p->pid, syscall_list[num], p->trapframe->a0,p->trapframe->a1,p->trapframe->a2, p->trapframe->a0);
+        printf("%d: syscall %s (%d %d %d) -> %d\n", p->pid, syscall_list[num], arg1,p->trapframe->a1,p->trapframe->a2, p->trapframe->a0);
       }
     } 
   } else {

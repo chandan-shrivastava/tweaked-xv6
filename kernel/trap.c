@@ -77,9 +77,12 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
+#ifndef FCFS
+#ifndef PBS
   if(which_dev == 2)
     yield();
-
+#endif
+#endif
   usertrapret();
 }
 
@@ -149,9 +152,28 @@ kerneltrap()
     panic("kerneltrap");
   }
 
+#ifndef FCFS
+#ifndef PBS
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  {
+#ifdef MLFQ
+    int qtick = 1;
+    for (int i = 0; i < (myproc()->qid); i++)
+      qtick *= 2;
+    if (myproc()->qrtime >= qtick)
+    {
+      if (myproc()->qid != 4)
+        myproc()->qid += 1;
+      yield();
+    }
+#endif
+#ifndef MLFQ
     yield();
+#endif
+  }
+#endif
+#endif
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
@@ -167,6 +189,7 @@ clockintr()
   update_time();
   wakeup(&ticks);
   release(&tickslock);
+  
 }
 
 // check if it's an external interrupt or software interrupt,

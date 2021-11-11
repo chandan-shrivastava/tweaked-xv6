@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "user.h": "c",
+        "types.h": "c",
+        "semaphore": "c",
+        "stop_token": "c",
+        "memory": "c",
+        "memory_resource": "c",
+        "shared_mutex": "c",
+        "io_context": "c",
+        "stddef.h": "c"
+    }
+}
