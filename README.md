@@ -1,4 +1,15 @@
 # Tweaked xv6
+
+## Installation
+
+Follow the steps given here to install required modules : [Installation Instruction](https://pdos.csail.mit.edu/6.S081/2020/tools.html)
+
+## How to Run
+```bash
+make qemu
+```
+
+To exit: `Ctrl+A + X`
 ## Implementation
 
 ## Task 1 
